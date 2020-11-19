@@ -1,0 +1,18 @@
+{
+  "name": "makevideo",
+  "version": "1.0.0",
+  "description": "Character API Video Generation Reference Implementation",
+  "main": "makevideo.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Media Semantics, Inc.",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.791.0",
+    "mp3-duration": "^1.1.0",
+    "node-zip": "^1.1.1",
+    "request": "^2.88.2",
+    "sharp": "^0.24.1"
+  }
+}
