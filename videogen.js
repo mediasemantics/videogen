@@ -251,6 +251,9 @@ class VideoGen {
                     '-i', this.blankFile
                 ]);
             }
+            args = args.concat([
+                '-vf', 'format=yuv420p'
+            ]);	
             args = args.concat([this.params.outputFile]);
             this.child = spawn('ffmpeg', args);
             this.child.on('close', (code)=>{
