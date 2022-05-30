@@ -43,7 +43,10 @@ class VideoGen {
                         if (err) console.log(err);
                         this.renderCore((err)=> {
                             this.removeTempFiles(() => {
-                                console.log("Render complete.")
+                                if (this.err) 
+                                    console.log("Render failed - "+this.err.message)
+                                else    
+                                    console.log("Render complete.")
                             });
                         });
                     });

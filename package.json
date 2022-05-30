@@ -1,8 +1,8 @@
 {
-  "name": "makevideo",
+  "name": "videogen",
   "version": "1.0.0",
   "description": "Character API Video Generation Reference Implementation",
-  "main": "makevideo.js",
+  "main": "videogen.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
