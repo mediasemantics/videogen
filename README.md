@@ -8,7 +8,7 @@ This is the Video Reference Implementation for the [Media Semantics Character AP
 You will need to be able to run Node.js, and you will need to obtain keys for the Character API and AWS Polly.
 
 ## Obtaining keys
-Use this AWS Markeplace link above to add the Character API service to your AWS account. You will receive codes by email. You will be charged $0.007 per call to the 'animate' endpoint. Each videogen invocation will result in one or more 'animate' calls, but generally fewer than 2 or 3, depending on the character and the actions used. There are no monthly minimums. Charges will appear on your monthly AWS bill. AWS Polly calls are metered based on the length of the text to be spoken. 
+Use the AWS Markeplace link above to add the Character API service to your AWS account. You will receive codes by email. You will be charged $0.007 per call to the 'animate' endpoint. Each videogen invocation will result in one or more 'animate' calls, but generally fewer than 2 or 3, depending on the character and the actions used. There are no monthly minimums. Charges will appear on your monthly AWS bill. AWS Polly calls are metered based on the length of the text to be spoken. 
 
 ## Installation
 
