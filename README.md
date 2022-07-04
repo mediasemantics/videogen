@@ -36,7 +36,7 @@ Save your changes.
 
 You can now generate a video:
 ```
-$ node videogen SusanHead 3.0 250 200 NeuralJoanna "<headnod/> Hello world!" hello.mp4
+$ node videogen MichelleHead SkyHigh250x200.jpg 250 200 0 0 NeuralJoanna "greet" "Hi there!" hello.mp4
 ```
 Invoke videogen without arguments to learn what each argument does.
 

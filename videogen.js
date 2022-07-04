@@ -12,11 +12,16 @@ const POLLY_SECRET_KEY = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
 const CHARACTER_API_KEY = 'xxxxxxxx';
 
 const URL_ANIMATE = "http://api.mediasemantics.com/animate";
+const URL_CATALOG = "http://api.mediasemantics.com/catalog";
 
 class VideoGen {
 
     constructor(params) {
         this.params = params;
+        this.catalog = null;
+        this.characterVersion = null;
+        this.backgroundData = null;
+        this.backgroundInfo = null;
         this.audioFile = null;
         this.lipsync = null;
         this.pngFile = null;
@@ -37,20 +42,26 @@ class VideoGen {
     }
 
     render() {
-        this.callPolly((err)=> {
-            if (err) console.log(err);
-            this.callAnimate((err) => {
-                if (err) console.log(err);
-                this.loadSecondaryTextures(0, (err) => {
-                    if (err) console.log(err);
-                    this.padOrTruncateAudio((err) => {
-                        if (err) console.log(err);
-                        this.renderCore((err)=> {
-                            this.removeTempFiles(() => {
-                                if (this.err) 
-                                    console.log("Render failed - "+this.err.message)
-                                else    
-                                    console.log("Render complete.")
+        this.callCatalog((err)=> {
+            if (err) return console.log(err.message);
+            this.prepareBackground((err)=> {
+                if (err) return console.log(err.message);
+                    this.callPolly((err)=> {
+                    if (err) return console.log(err.message);
+                    this.callAnimate((err) => {
+                        if (err) return console.log(err.message);
+                        this.loadSecondaryTextures(0, (err) => {
+                            if (err) return console.log(err.message);
+                            this.padOrTruncateAudio((err) => {
+                                if (err) return console.log(err.message);
+                                this.renderCore((err)=> {
+                                    this.removeTempFiles(() => {
+                                        if (this.err) 
+                                            console.log("Render failed - "+this.err.message)
+                                        else    
+                                            console.log("Render complete.")
+                                    });
+                                });
                             });
                         });
                     });
@@ -59,11 +70,51 @@ class VideoGen {
         });
     }
 
+    // Get the character catalog
+    callCatalog(callback) {
+        let o = {};
+        o.key = CHARACTER_API_KEY;        
+        request.get({url:URL_CATALOG, qs: o, encoding: null}, (err, httpResponse, body) => {
+            if (err) return callback(err);
+            if (httpResponse.statusCode >= 400) return callback(new Error(body.toString()));
+            this.catalog = JSON.parse(body);
+            // Check params
+            let obj = this.catalog.characters.find(rec => rec.id == this.params.character);
+            if (!obj) {
+                let a = this.catalog.characters.map(rec => rec.id);
+                return callback(new Error("character must be one of: " + a.join(" ")));
+            }
+            // Pick up the latest version
+            this.characterVersion = obj.version;
+            callback(null);
+        });
+    }
+
+    prepareBackground(callback) {
+        if (this.params.background.substr(0,1) == '#') {
+            let solid = sharp({create: { width:this.params.width, height:this.params.height, channels: 4, background: this.params.background }});
+            solid.raw().toBuffer((err, data, info) => {
+                if (err) return callback(err);
+                this.backgroundData = data;
+                this.backgroundInfo = info;
+                callback(null);
+            });
+        }        
+        else {
+            sharp(this.params.background).resize(this.params.width, this.params.height, {fit:"cover", position:"centre"}).raw().toBuffer((err, data, info) => {
+                if (err) return callback(new Error("failed to load background "+err.message));
+                this.backgroundData = data;
+                this.backgroundInfo = info;
+                callback(null);             
+            });
+        }
+    }
+
     // Creates an mp3 audio file. Sets this.audioFile and this.lipsync.
     callPolly(callback) {
         // Construct data for polly from the voice and text
         // Strip all xml tags for the version of the text going to Polly
-        let textOnly = this.params.text.replace(new RegExp("<[^>]*>", "g"), "").replace("  "," ").trim(); 
+        let textOnly = this.params.say.replace(new RegExp("<[^>]*>", "g"), "").replace("  "," ").trim(); 
         // Use the Neural prefix to use the Neural version of an AWS voice
         let neural = false;
         let voice = this.params.voice;
@@ -111,21 +162,22 @@ class VideoGen {
     callAnimate(callback) {
         let o = {};
         o.character = this.params.character;
-        o.version = this.params.characterVersion,
+        o.version = this.characterVersion,
         o.format = "png";
         o.width = this.params.width;
         o.height = this.params.height;
         o.charscale = 1;
-        o.charx = 0;
-        o.chary = 0;
+        o.charx = this.params.offsetX;
+        o.chary = this.params.offsetY;
         o.fps = "24";
         o.key = CHARACTER_API_KEY;
-        o.backcolor = "#ffffff";
         o.with = "all";
         o.return = true; // but no recover
         o.zipdata = true;
         o.lipsync = this.lipsync;
-        o.action = "<say>" + this.params.text + "</say>";
+        let template = this.getTemplateFromActionTag(this.params.do);
+        let action = this.getXMLFromTemplate(template, this.remainingTagsToXML(this.params.say));
+        o.action = action;
         // Call animate
         request.get({url:URL_ANIMATE, qs: o, encoding: null}, (err, httpResponse, body) => {
             if (err) return callback(err);
@@ -163,7 +215,7 @@ class VideoGen {
 
         let o = {};
         o.character = this.params.character;
-        o.version = this.params.characterVersion,
+        o.version = this.characterVersion,
         o.format = "png";
         o.width = this.params.width;
         o.height = this.params.height;
@@ -172,7 +224,6 @@ class VideoGen {
         o.chary = 0;
         o.fps = "24";
         o.key = CHARACTER_API_KEY;
-        o.backcolor = "#ffffff";
         if (texture == "default") 
             o.action = "";
         else 
@@ -347,16 +398,31 @@ class VideoGen {
                                     a.push({input:this.pieceDatas[extractKey], raw:this.pieceInfos[extractKey], left:recipe[i][0], top:recipe[i][1]});
                             }
                         }
-                        sharp({create: { width: this.params.width, height: this.params.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }}).composite(a).png({compressionLevel:0}).toBuffer((err, data) => {
+                        sharp({create: { width: this.params.width, height: this.params.height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }}).composite(a).raw().toBuffer((err, data, info) => {
                             if (err) return callback(err);
 
-                            // Write the image off to ffmpeg
-                            if (this.child && this.child.exitCode === null) this.child.stdin.write(data);
-                            // fs.writeFileSync("frame"+frame+".png", data); // useful for debugging
-                            this.lastData = data;
-                            this.lastRecipe = JSON.parse(JSON.stringify(recipe));                        
-                            data = null; 
-                            return callback(null);
+                            // Actual 32 bit character image is now in data, info - here is where you can merge it with background art, another video, etc.
+                            let a = [];
+                            a.push({input:this.backgroundData, raw:this.backgroundInfo, left:0, top:0});
+                            a.push({input:data, raw:info, left:this.params.offsetX, top:this.params.offsetY});
+                            sharp({create: { width: this.params.width, height:this.params.height, channels: 3, background: { r: 255, g: 255, b: 255, } }}).composite(a).png({compressionLevel:0}).toBuffer((err, dataFinal) => {
+                                if (err) return callback(err);
+                                            
+                                // Write the image off to ffmpeg
+                                if (this.child && this.child.exitCode === null) this.child.stdin.write(dataFinal);
+
+                                // fs.writeFileSync("frame"+frame+".png", data); // useful for debugging
+
+                                // Remember the last frame in case the next one is identical
+                                this.lastData = dataFinal;
+                                this.lastRecipe = JSON.parse(JSON.stringify(recipe));
+                            
+                                data = null;
+                                info = null;
+                                dataFinal = null; 
+
+                                return callback(null);
+                            });
                         });
                     });
                 });
@@ -718,6 +784,129 @@ class VideoGen {
             }
         });
     }
+
+    remainingTagsToXML(s) {
+        // [headright] -> <headright/>
+        s = s.replace(/\[([\w-]*?)\]/g, '<$1/>');
+        // [pause 500ms] -> <pause msec="$1"/>
+        s = s.replace(/\[pause (.*?)ms\]/g, '<pause msec="$1"/>');
+        return s;
+    }
+    
+    getTemplateFromActionTag(tag) {
+        let charrec = this.catalog.characters.find(rec => rec.id == this.params.character);
+        let style = charrec.style;
+        for (let i = 0; i < this.catalog.actions.length; i++) {
+            let actionrec = this.catalog.actions[i];
+            if (actionrec.id == tag) {
+                var categoryrec = this.catalog.actionCategories.find(rec => rec.id == actionrec.category);
+                if (!categoryrec || !categoryrec.characterStyles || categoryrec.characterStyles.indexOf(style) != -1) {
+                    return actionrec.xml;
+                }
+            }
+        }
+        return "";
+    }
+
+    getXMLFromTemplate(action, say) {
+        let charrec = this.catalog.characters.find(rec => rec.id == this.params.character);
+        let style = charrec.style;
+        let hd = style.split("-")[0] == "hd";
+        let bob = true;
+        if (say) {
+            // e.g. action: "<lookleft/><gestureleft/><cmd type='apogee'>+{max:5}+<lookuser/><handsbyside/>+{max:0,user:1}"
+            var a = action ? action.split("+") : ["{max:0,user:1}"];  // latter is the default Look At User
+            // e.g. a = ["{max:0,user:1}"]
+            //      a = ["<lookleft/><gestureleft/><cmd type='apogee'>", "{max:5}", "<lookuser/><handsbyside/>", "{max:0,user:1}"]
+            var b = say.split(" "); // e.g. ["this", "is", "a", "test"]
+            var seeds = [1];
+            for (var i = 0; i < say.length; i++)
+                seeds[0] += 13 * say.charCodeAt(i);
+            var j = 0; // index into b
+            var wordsSinceBlink = 0;
+            var s = "";
+            for (var i = 0; i < a.length; i++) {
+                if (a[i].substr(0,1) != '{') {
+                    s += a[i]; // regular action commands
+                }
+                else {
+                    var rec = JSON.parse(a[i].replace('max','"max"').replace('user','"user"').replace('silence','"silence"')); // quick parse
+                    if (rec.silence) {
+                        s += '[silence ' + rec.silence + 'ms]';
+                        continue;
+                    }
+                    var c = rec.max;
+                    // Case where there were no (or few) words - i.e. user used an audio file but neglected to give us a script, or an unusually short script - insert a pause
+                    if (c > 0 && b.length <= 3)
+                        s += "<pause/>";
+                    if (hd) {
+                        if (rec.user)
+                            s += '<fill name="speak1"/> ';
+                        // peel off up to max words (or all the words)
+                        while (j < b.length && (c > 0 || rec.max == 0)) { // while there are words left and we have not exceeded our max, if any
+                            s += b[j];  // add next word
+                            if (j < b.length - 1) { // if this is not the last word, add a space
+                                s += " ";
+                            }
+                            j++;
+                            c--;
+                        }
+                    }
+                    else {
+                        // peel off up to max words (or all the words)
+                        while (j < b.length && (c > 0 || rec.max == 0)) { // while there are words left and we have not exceeded our max, if any
+                            s += b[j];  // add next word
+                            if (j < b.length - 1) { // if this is not the last word, add a space OR a command 
+                                if (!rec.user) 
+                                    s += " "; // there can be no head-bob here, e.g. head turned - and might as well not blink either
+                                else {
+                                    if (bob && j < b.length - 5 && this.seededRandom(seeds) < 0.33) { // roughly 1/3 words get a bob, but not right towards the end
+                                        s += this.randomHead(seeds);
+                                    }
+                                    else if (wordsSinceBlink > 10) {
+                                        s += " <blink/> ";
+                                        wordsSinceBlink = 0;
+                                    }
+                                    else s += " ";
+                                }
+                            }
+                            wordsSinceBlink++;
+                            j++;
+                            c--;
+                        }
+                    }
+                }
+            }
+            action = "<say>" + s + "</say>";
+        }
+        else {
+            // Case where user has no script or audio tag - just an action - now we need to interpret our tags a bit differently
+            var a = action ? action.split("+") : [];
+            var s = "";
+            for (var i = 0; i < a.length; i++) {
+                if (a[i].substr(0,1) != '{') {
+                    s += a[i]; // regular action commands
+                }
+                else {
+                    var rec = JSON.parse(a[i].replace('max','"max"').replace('user','"user"').replace('silence','"silence"'));
+                    if (rec.max) s += "<pause/>"; // this is what we had before our switch to +{}+ commands
+                }
+            }
+            action = s;
+        }
+        return action;
+    } 
+    
+    seededRandom(seeds) {
+        var x = Math.sin(seeds[0]++) * 10000;
+        return x - Math.floor(x);
+    }
+
+    randomHead(seeds) {
+        var n = (1+Math.floor(this.seededRandom(seeds)*4));
+        if (n == 3) return " <headuser/> "
+        else return " <headrandom"+n+"/> ";
+    }    
 }
 
 // Startup as a command-line tool
@@ -725,18 +914,23 @@ if (POLLY_ACCESS_KEY.indexOf('xxx') > -1 || POLLY_SECRET_KEY.indexOf('xxx') > -1
     console.log('please edit videogen.js to provide AWS Polly credentials')
 else if (CHARACTER_API_KEY.indexOf('xxx') > -1)
     console.log('please edit videogen.js to provide Character API credentials (https://aws.amazon.com/marketplace/pp/B06ZY1VBFZ)')
-else if (process.argv.length != 9)
-    console.log('syntax: node videogen character version width height voice "text" outputfile\n e.g. node videogen SusanHead 3.0 250 200 NeuralJoanna "<headnod/> Hello world!" hello.mp4');
-else if (process.argv[8].substr(-4) != ".mp4")
+else if (process.argv.length != 12)
+    console.log('syntax: node videogen character background width height offsetx offsety voice "do" "say" outputfile\nBackground can be a hex color value or an image file, and offset controls placement of character in background.\nFor "do" and "say", please see https://www.mediasemantics.com/characters.html\ne.g. node videogen MichelleHead SkyHigh250x200.jpg 250 200 0 0 NeuralJoanna "greet" "Hi there!" hello.mp4');
+else if (process.argv[11].substr(-4) != ".mp4")
     console.log("output file must end in .mp4");
+else if (process.argv[10].length > 255)
+    console.log("Maximum say length is 255 characters - recommend rendering one sentence at a time and then concatenating.");
 else
     new VideoGen({
         character: process.argv[2], 
-        characterVersion: process.argv[3], 
+        background: process.argv[3], 
         width: parseInt(process.argv[4]),
         height: parseInt(process.argv[5]),
-        voice: process.argv[6], 
-        text: process.argv[7], 
-        outputFile: process.argv[8]}
+        offsetX: parseInt(process.argv[6]),
+        offsetY: parseInt(process.argv[7]),
+        voice: process.argv[8], 
+        do: process.argv[9], 
+        say: process.argv[10], 
+        outputFile: process.argv[11]}
     ).render();
 
