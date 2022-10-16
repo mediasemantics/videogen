@@ -815,7 +815,7 @@ class VideoGen {
         let bob = true;
         if (say) {
             // e.g. action: "<lookleft/><gestureleft/><cmd type='apogee'>+{max:5}+<lookuser/><handsbyside/>+{max:0,user:1}"
-            var a = action ? action.split("+") : ["{max:0,user:1}"];  // latter is the default Look At User
+            var a = action ? action.split("+") : (getActionTemplateFromTag("look-default", character) || "{max:0,user:1}").split("+");  // latter is the default Look At User
             // e.g. a = ["{max:0,user:1}"]
             //      a = ["<lookleft/><gestureleft/><cmd type='apogee'>", "{max:5}", "<lookuser/><handsbyside/>", "{max:0,user:1}"]
             var b = say.split(" "); // e.g. ["this", "is", "a", "test"]
