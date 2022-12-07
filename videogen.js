@@ -815,7 +815,7 @@ class VideoGen {
         let bob = true;
         if (say) {
             // e.g. action: "<lookleft/><gestureleft/><cmd type='apogee'>+{max:5}+<lookuser/><handsbyside/>+{max:0,user:1}"
-            var a = action ? action.split("+") : (getActionTemplateFromTag("look-default", character) || "{max:0,user:1}").split("+");  // latter is the default Look At User
+            var a = action ? action.split("+") : (this.getTemplateFromActionTag("look-default") || "{max:0,user:1}").split("+");  // latter is the default Look At User
             // e.g. a = ["{max:0,user:1}"]
             //      a = ["<lookleft/><gestureleft/><cmd type='apogee'>", "{max:5}", "<lookuser/><handsbyside/>", "{max:0,user:1}"]
             var b = say.split(" "); // e.g. ["this", "is", "a", "test"]
@@ -915,7 +915,7 @@ if (POLLY_ACCESS_KEY.indexOf('xxx') > -1 || POLLY_SECRET_KEY.indexOf('xxx') > -1
 else if (CHARACTER_API_KEY.indexOf('xxx') > -1)
     console.log('please edit videogen.js to provide Character API credentials (https://aws.amazon.com/marketplace/pp/B06ZY1VBFZ)')
 else if (process.argv.length != 12)
-    console.log('syntax: node videogen character background width height offsetx offsety voice "do" "say" outputfile\nBackground can be a hex color value or an image file, and offset controls placement of character in background.\nFor "do" and "say", please see https://www.mediasemantics.com/characters.html\ne.g. node videogen MichelleHead SkyHigh250x200.jpg 250 200 0 0 NeuralJoanna "greet" "Hi there!" hello.mp4');
+    console.log('syntax: node videogen character background width height offsetx offsety voice "do" "say" outputfile\nBackground can be a hex color value in quotes, e.g. "#ffffff", or an image file.\nFor "do" and "say", please see https://www.mediasemantics.com/characters.html\ne.g. node videogen MichelleHead SkyHigh250x200.jpg 250 200 0 0 NeuralJoanna "greet" "Hi there!" hello.mp4');
 else if (process.argv[11].substr(-4) != ".mp4")
     console.log("output file must end in .mp4");
 else if (process.argv[10].length > 255)
