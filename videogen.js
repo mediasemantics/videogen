@@ -9,7 +9,7 @@ const mp3Duration = require('mp3-duration');
 // TODO replace these with the appropriate credentials (see readme)
 const POLLY_ACCESS_KEY = 'xxxxxxxxxxxxxx';
 const POLLY_SECRET_KEY = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
-const CHARACTER_API_KEY = 'xxxxxxxx';
+const CHARACTER_API_KEY = 'xxxxxxxxxxxxxxxxxxxxxxxxx';
 
 const URL_ANIMATE = "http://api.mediasemantics.com/animate";
 const URL_CATALOG = "http://api.mediasemantics.com/catalog";
@@ -114,7 +114,7 @@ class VideoGen {
     callPolly(callback) {
         // Construct data for polly from the voice and text
         // Strip all xml tags for the version of the text going to Polly
-        let textOnly = this.params.say.replace(new RegExp("<[^>]*>", "g"), "").replace("  "," ").trim(); 
+        let textOnly = this.removeAllButSpeechTags(this.params.say);
         // Use the Neural prefix to use the Neural version of an AWS voice
         let neural = false;
         let voice = this.params.voice;
@@ -125,8 +125,8 @@ class VideoGen {
         let pollyData = {
             OutputFormat: 'mp3',
             SampleRate: '24000',
-            Text: textOnly,
-            TextType: 'text',
+            Text: this.msToSSML(textOnly),
+            TextType: 'ssml',
             VoiceId: voice,
             Engine: (neural ? "neural" : "standard"),
         }
@@ -175,9 +175,8 @@ class VideoGen {
         o.return = true; // but no recover
         o.zipdata = true;
         o.lipsync = this.lipsync;
-        let template = this.getTemplateFromActionTag(this.params.do);
-        let action = this.getXMLFromTemplate(template, this.remainingTagsToXML(this.params.say));
-        o.action = action;
+        o.do = this.params.do;
+        o.say = o.say = this.removeSpeechTags(this.params.say);
         // Call animate
         request.get({url:URL_ANIMATE, qs: o, encoding: null}, (err, httpResponse, body) => {
             if (err) return callback(err);
@@ -224,10 +223,13 @@ class VideoGen {
         o.chary = 0;
         o.fps = "24";
         o.key = CHARACTER_API_KEY;
-        if (texture == "default") 
-            o.action = "";
-        else 
+        if (texture == "default") {
+            o.do = "";
+            o.say = "";
+        }
+        else {
             o.texture = texture;
+        }
         request.get({url:URL_ANIMATE, qs: o, encoding: null}, (err, httpResponse, body) => {
             if (err) return callback(err);
             if (httpResponse.statusCode >= 400) return callback(new Error(body.toString()));
@@ -240,15 +242,43 @@ class VideoGen {
     }
 
     // Now that we know the exact number of frames in the movie, we can either truncate the audio file or
-    // create a second, blank, audio file (this.blankFile) to complete the movie.
+    // create secondary, blank, audio files (this.blankFilePre, this.blankFilePost) to complete the movie.
 
-    // May create this.blankFile if padding is required.
+    // May create this.blankFilePre if leadingSilence padding is required.
     padOrTruncateAudio(callback) {
+        if (this.animData.leadingSilence) {
+            this.blankFilePre = this.audioFile.replace(".mp3", "_blankpre.mp3");
+            fs.unlink(this.blankFilePre, ()=>{
+                // ffmpeg -f lavfi -i anullsrc=channel_layout=5.1:sample_rate=48000 -t 3 silence_3_sec.mp3
+                let args = [
+                    '-f', 'lavfi',
+                    '-i', 'anullsrc=channel_layout=5.1:sample_rate=24000',
+                    '-t', this.animData.leadingSilence/1000,
+                    this.blankFilePre
+                ];
+                this.child = spawn('ffmpeg', args);
+                this.child.stdout.on('data', (data) => {
+                    //console.log(`child stdout:\n${data}`);  // for debugging
+                });
+                this.child.stderr.on('data', (data) => {
+                    //console.error(`child stderr:\n${data}`);  // for debugging
+                });
+                this.child.on('close', (code)=>{
+                    this.padOrTruncateAudioCont(callback);
+                });
+            });
+        }
+        else {
+            this.padOrTruncateAudioCont(callback);
+        }
+    }
+
+    padOrTruncateAudioCont(callback) {
         mp3Duration(this.audioFile, (err, duration) => {
             if (err) return callback(err);
 
             let durationMovie = this.animData.frames.length / 24;
-            let gap = durationMovie - duration;
+            let gap = durationMovie - (this.animData.leadingSilence / 1000 + duration);
 
             // Case where we need to truncate the audio. This can happen if the audio ends in
             // silence, since the length of the movie is driven by the lipsync data.
@@ -278,14 +308,25 @@ class VideoGen {
 
             // Case where we need to pad the audio.
             else {
-                this.blankFile = this.audioFile.replace(".mp3", "_blank.raw");
-                // ffmpeg -f s16le -ar 24000 -ac 1 -i input.raw ...
-                let cycles = Math.round(gap * 24000);
-                // So need a file with cycles * 2 bytes of 0
-                let buf = Buffer.alloc(cycles * 2);
-                fs.writeFile(this.blankFile, buf, (err) => {
-                    if (err) return callback(err);
-                    callback(null);
+                this.blankFilePost = this.audioFile.replace(".mp3", "_blankpost.mp3");
+                fs.unlink(this.blankFilePost, ()=>{
+                    // ffmpeg -f lavfi -i anullsrc=channel_layout=5.1:sample_rate=48000 -t 3 silence_3_sec.mp3
+                    let args = [
+                        '-f', 'lavfi',
+                        '-i', 'anullsrc=channel_layout=5.1:sample_rate=24000',
+                        '-t', gap,
+                        this.blankFilePost
+                    ];
+                    this.child = spawn('ffmpeg', args);
+                    this.child.stdout.on('data', (data) => {
+                        //console.log(`child stdout:\n${data}`);  // for debugging
+                    });
+                    this.child.stderr.on('data', (data) => {
+                        //console.error(`child stderr:\n${data}`);  // for debugging
+                    });
+                    this.child.on('close', (code)=>{
+                        callback(null);
+                    });
                 });
             }
         });
@@ -300,15 +341,15 @@ class VideoGen {
                     '-f', 'image2pipe',
                     '-i', '-',
             ];
-            args = args.concat(['-i', this.audioFile]);
-            if (this.blankFile) {
-                args = args.concat([
-                    '-f', 's16le',
-                    '-ar', '24000',
-                    '-ac', '1',
-                    '-i', this.blankFile
-                ]);
-            }
+
+            // -i "concat:pre.mp3|input.mp3|post.mp3"
+            let s = "";
+            if (this.blankFilePre || this.blankFilePost) s += "concat:";
+            if (this.blankFilePre) s += this.blankFilePre + "|";
+            s += this.audioFile;
+            if (this.blankFilePost) s += "|" + this.blankFilePost;
+            args = args.concat(['-i', s]);
+
             args = args.concat([
                 '-vf', 'format=yuv420p'
             ]);	
@@ -774,138 +815,125 @@ class VideoGen {
 
     removeTempFiles(callback) {
         fs.unlink(this.audioFile, () => {
-            if (this.blankFile) {
-                fs.unlink(this.blankFile, () => {
-                    callback();
+            if (this.blankFilePre) {
+                fs.unlink(this.blankFilePre, () => {
+                    this.removeTempFiles2(callback);
                 });
             }
             else {
-                callback();
+                this.removeTempFiles2(callback);
             }
         });
     }
 
-    remainingTagsToXML(s) {
-        // [headright] -> <headright/>
-        s = s.replace(/\[([\w-]*?)\]/g, '<$1/>');
-        // [pause 500ms] -> <pause msec="$1"/>
-        s = s.replace(/\[pause (.*?)ms\]/g, '<pause msec="$1"/>');
-        return s;
-    }
-    
-    getTemplateFromActionTag(tag) {
-        let charrec = this.catalog.characters.find(rec => rec.id == this.params.character);
-        let style = charrec.style;
-        for (let i = 0; i < this.catalog.actions.length; i++) {
-            let actionrec = this.catalog.actions[i];
-            if (actionrec.id == tag) {
-                var categoryrec = this.catalog.actionCategories.find(rec => rec.id == actionrec.category);
-                if (!categoryrec || !categoryrec.characterStyles || categoryrec.characterStyles.indexOf(style) != -1) {
-                    return actionrec.xml;
-                }
-            }
-        }
-        return "";
-    }
-
-    getXMLFromTemplate(action, say) {
-        let charrec = this.catalog.characters.find(rec => rec.id == this.params.character);
-        let style = charrec.style;
-        let hd = style.split("-")[0] == "hd";
-        let bob = true;
-        if (say) {
-            // e.g. action: "<lookleft/><gestureleft/><cmd type='apogee'>+{max:5}+<lookuser/><handsbyside/>+{max:0,user:1}"
-            var a = action ? action.split("+") : (this.getTemplateFromActionTag("look-default") || "{max:0,user:1}").split("+");  // latter is the default Look At User
-            // e.g. a = ["{max:0,user:1}"]
-            //      a = ["<lookleft/><gestureleft/><cmd type='apogee'>", "{max:5}", "<lookuser/><handsbyside/>", "{max:0,user:1}"]
-            var b = say.split(" "); // e.g. ["this", "is", "a", "test"]
-            var seeds = [1];
-            for (var i = 0; i < say.length; i++)
-                seeds[0] += 13 * say.charCodeAt(i);
-            var j = 0; // index into b
-            var wordsSinceBlink = 0;
-            var s = "";
-            for (var i = 0; i < a.length; i++) {
-                if (a[i].substr(0,1) != '{') {
-                    s += a[i]; // regular action commands
-                }
-                else {
-                    var rec = JSON.parse(a[i].replace('max','"max"').replace('user','"user"').replace('silence','"silence"')); // quick parse
-                    if (rec.silence) {
-                        s += '[silence ' + rec.silence + 'ms]';
-                        continue;
-                    }
-                    var c = rec.max;
-                    // Case where there were no (or few) words - i.e. user used an audio file but neglected to give us a script, or an unusually short script - insert a pause
-                    if (c > 0 && b.length <= 3)
-                        s += "<pause/>";
-                    if (hd) {
-                        if (rec.user)
-                            s += '<fill name="speak1"/> ';
-                        // peel off up to max words (or all the words)
-                        while (j < b.length && (c > 0 || rec.max == 0)) { // while there are words left and we have not exceeded our max, if any
-                            s += b[j];  // add next word
-                            if (j < b.length - 1) { // if this is not the last word, add a space
-                                s += " ";
-                            }
-                            j++;
-                            c--;
-                        }
-                    }
-                    else {
-                        // peel off up to max words (or all the words)
-                        while (j < b.length && (c > 0 || rec.max == 0)) { // while there are words left and we have not exceeded our max, if any
-                            s += b[j];  // add next word
-                            if (j < b.length - 1) { // if this is not the last word, add a space OR a command 
-                                if (!rec.user) 
-                                    s += " "; // there can be no head-bob here, e.g. head turned - and might as well not blink either
-                                else {
-                                    if (bob && j < b.length - 5 && this.seededRandom(seeds) < 0.33) { // roughly 1/3 words get a bob, but not right towards the end
-                                        s += this.randomHead(seeds);
-                                    }
-                                    else if (wordsSinceBlink > 10) {
-                                        s += " <blink/> ";
-                                        wordsSinceBlink = 0;
-                                    }
-                                    else s += " ";
-                                }
-                            }
-                            wordsSinceBlink++;
-                            j++;
-                            c--;
-                        }
-                    }
-                }
-            }
-            action = "<say>" + s + "</say>";
+    removeTempFiles2(callback) {
+        if (this.blankFilePost) {
+            fs.unlink(this.blankFilePost, () => {
+                callback();
+            });
         }
         else {
-            // Case where user has no script or audio tag - just an action - now we need to interpret our tags a bit differently
-            var a = action ? action.split("+") : [];
-            var s = "";
-            for (var i = 0; i < a.length; i++) {
-                if (a[i].substr(0,1) != '{') {
-                    s += a[i]; // regular action commands
-                }
-                else {
-                    var rec = JSON.parse(a[i].replace('max','"max"').replace('user','"user"').replace('silence','"silence"'));
-                    if (rec.max) s += "<pause/>"; // this is what we had before our switch to +{}+ commands
-                }
-            }
-            action = s;
+            callback();
         }
-        return action;
-    } 
-    
-    seededRandom(seeds) {
-        var x = Math.sin(seeds[0]++) * 10000;
-        return x - Math.floor(x);
     }
 
-    randomHead(seeds) {
-        var n = (1+Math.floor(this.seededRandom(seeds)*4));
-        if (n == 3) return " <headuser/> "
-        else return " <headrandom"+n+"/> ";
+    msToSSML(s) { // e.g. "[silence] Look here." --> "<break time="1s"/> Look here."    
+        var ret = this.ssmlHelper(s, 1);
+        // Any remaining tags can be eliminated for tts
+        ret = ret.replace(/\[[^\]]*\]/g, "").replace("  "," "); // e.g. Look [cmd] here. --> Look here.
+        return ret;
+    }
+    
+    removeSpeechTags(s) {  // e.g. "[silence] Look [blink] here." --> "Look [blink] here."    
+        let temp = this.ssmlHelper(s, 2);
+        temp = temp.replace(/  /g, " ").trim();
+        return temp;
+    }
+    
+    removeAllButSpeechTags(s) {  // e.g. "[silence] Look [blink] here." --> "[silence] Look here."    
+        let temp = this.ssmlHelper(s, 3);
+        temp = temp.replace(new RegExp("\[[^\]]*\]", "g"), "").replace("  ", " ").trim(); // e.g. "Look [cmd] here." --> "Look here."    
+        temp = temp.replace(/\{/g,'[');
+        temp = temp.replace(/\}/g,']');
+        return temp;
+    }
+    
+    ssmlHelper(s, c) {
+        //var old = s;
+        
+        // SSML is very strict about closing tags - we try to automatically close some tags
+        if (c==1 && s.indexOf("[conversational]") != -1 && s.indexOf("[/conversational]") == -1) s += "[/conversational]";
+        if (c==1 && s.indexOf("[news]") != -1 && s.indexOf("[/news]") == -1) s += "[/news]";
+    
+        // Super-useful [spoken]...[/spoken][written]...[/written] (take all of spoken, take none of written)
+        s = s.replace(/\[spoken\](.*?)\[\/spoken\]/g, c==1 ? "$1" : (c==2 ? '$1': '{spoken}$1{/spoken}'));
+        s = s.replace(/\[written\](.*?)\[\/written\]/g, c==1 ? "" : (c==2 ? '': '{written}$1{/written}'));
+    
+        // Pause
+        s = s.replace(/\[silence\]/g, c==1 ? '<break time="1s"/>' : (c==2 ? '': '[silence]'));      // [silence]
+        s = s.replace(/\[silence ([0-9.]*)s\]/g, c==1 ? '<break time="$1s"/>' : (c==2 ? '': '[silence $1s]'));      // [silence 1.5s]
+        s = s.replace(/\[silence ([0-9.]*)ms\]/g, c==1 ? '<break time="$1ms"/>' : (c==2 ? '': '[silence $1ms]'));      // [silence 300ms]
+        
+        // Emphasis - note that these are not supported by polly except in non-neural, which we try to avoid, so eliminating from the speech tags for now.
+        
+        // Language
+        s = s.replace(/\[english\]/g, c==1 ? '<lang xml:lang="en-US">' : (c==2 ? '': '{english}'));      // [english]...[/english]
+        s = s.replace(/\[\/english\]/g, c==1 ? '</lang>' : (c==2 ? '': '{/english}'));                    
+        s = s.replace(/\[french\]/g, c==1 ? '<lang xml:lang="fr-FR">' : (c==2 ? '': '{french}'));      // [french]...[/french]
+        s = s.replace(/\[\/french\]/g, c==1 ? '</lang>' : (c==2 ? '': '{/french}'));                    
+        s = s.replace(/\[spanish\]/g, c==1 ? '<lang xml:lang="es">' : (c==2 ? '': '{spanish}'));      // [spanish]...[/spanish]
+        s = s.replace(/\[\/spanish\]/g, c==1 ? '</lang>' : (c==2 ? '': '{/spanish}'));                    
+        s = s.replace(/\[italian\]/g, c==1 ? '<lang xml:lang="it">' : (c==2 ? '': '{italian}'));      // [italian]...[/italian]
+        s = s.replace(/\[\/italian\]/g, c==1 ? '</lang>' : (c==2 ? '': '{/italian}'));                    
+        s = s.replace(/\[german\]/g, c==1 ? '<lang xml:lang="de">' : (c==2 ? '': '{german}'));      // [german]...[/german]
+        s = s.replace(/\[\/german\]/g, c==1 ? '</lang>' : (c==2 ? '': '{/german}'));                    
+    
+        // Say as
+        s = s.replace(/\[spell\]/g, c==1 ? '<say-as interpret-as="characters">' : (c==2 ? '': '{spell}'));      // [spell]a[/spell]
+        s = s.replace(/\[\/spell\]/g, c==1 ? '</say-as>' : (c==2 ? '': '{/spell}'));
+        s = s.replace(/\[digits\]/g, c==1 ? '<say-as interpret-as="digits">' : (c==2 ? '': '{digits}'));      // [digits]123[/digits]
+        s = s.replace(/\[\/digits\]/g, c==1 ? '</say-as>' : (c==2 ? '': '{/digits}'));
+        s = s.replace(/\[verb\]/g, c==1 ? '<w role="amazon:VB">' : (c==2 ? '': '{verb}'));      // [verb]present[/verb]
+        s = s.replace(/\[\/verb\]/g, c==1 ? '</w>' : (c==2 ? '': '{/verb}'));
+        s = s.replace(/\[past\]/g, c==1 ? '<w role="amazon:VBD">' : (c==2 ? '': '{past}'));      // [past]present[/past]
+        s = s.replace(/\[\/past\]/g, c==1 ? '</w>' : (c==2 ? '': '{/past}'));
+        s = s.replace(/\[alt\]/g, c==1 ? '<w role="amazon:SENSE_1">' : (c==2 ? '': '{alt}'));      // [alt]bass[/alt]
+        s = s.replace(/\[\/alt\]/g, c==1 ? '</w>' : (c==2 ? '': '{/alt}'));
+    
+        // Breathing not supported by neural, so will not include it
+    
+        s = s.replace(/\[ipa (.*?)\]/g, c==1 ? '<phoneme alphabet="ipa" ph="$1">' : (c==2 ? '': '{ipa $1}'));      // [ipa pɪˈkɑːn]pecan[/ipa]
+        s = s.replace(/\[\/ipa\]/g, c==1 ? '</phoneme>' : (c==2 ? '': '{/ipa}'));
+        var m;
+        while (m = s.match(/\[sampa (.*?)\]/)) {
+            s = s.replace(m[0], c==1 ? '<phoneme alphabet="x-sampa" ph="' + m[1].replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;") + '">' : (c==2 ? '': '{sampa $1}'));
+        }
+        s = s.replace(/\[\/sampa\]/g, c==1 ? '</phoneme>' : (c==2 ? '': '{/sampa}'));
+        s = s.replace(/\[pinyin (.*?)\]/g, c==1 ? '<phoneme alphabet="x-amazon-pinyin" ph="$1">' : (c==2 ? '': '{pinyin}'));      // [pinyin bao2]薄[/pinyin]
+        s = s.replace(/\[\/pinyin\]/g, c==1 ? '</phoneme>' : (c==2 ? '': '{/pinyin}'));
+    
+        s = s.replace(/\[drc\]/g, c==1 ? '<amazon:effect name="drc">' : (c==2 ? '': '{drc}'));      // [drc]dynamic range correction[/drc]
+        s = s.replace(/\[\/drc\]/g, c==1 ? '</amazon:effect>' : (c==2 ? '': '{/drc}'));
+        
+        // Speaking style
+        s = s.replace(/\[conversational\]/g, c==1 ? '<amazon:domain name="conversational">' : (c==2 ? '': '{conversational}'));      // [conversational]...[/conversational]
+        s = s.replace(/\[\/conversational\]/g, c==1 ? '</amazon:domain>' : (c==2 ? '': '{/conversational}'));
+        s = s.replace(/\[news\]/g, c==1 ? '<amazon:domain name="news">' : (c==2 ? '': '{news}'));      // [news]...[/news]
+        s = s.replace(/\[\/news\]/g, c==1 ? '</amazon:domain>' : (c==2 ? '': '{/news}')); 
+        
+        // volume
+        s = s.replace(/\[volume (.*?)\]/g, c==1 ? '<prosody volume="$1">' : (c==2 ? '': '{volume $1}'));      // [volume loud]...[/volume] [volume -6dB]...[/volume]
+        s = s.replace(/\[\/volume\]/g, c==1 ? '</prosody>' : (c==2 ? '': '{/volume}')); 
+        // rate
+        s = s.replace(/\[rate (.*?)\]/g, c==1 ? '<prosody rate="$1">' : (c==2 ? '': '{rate $1}'));      // [rate slow]...[/rate] [rate 80%]...[/rate]
+        s = s.replace(/\[\/rate\]/g, c==1 ? '</prosody>' : (c==2 ? '': '{/rate}')); 
+        // pitch
+        s = s.replace(/\[pitch (.*?)\]/g, c==1 ? '<prosody pitch="$1">' : (c==2 ? '': '{pitch $1}'));      // [pitch high]...[/pitch] [pitch +5%]...[/pitch]
+        s = s.replace(/\[\/pitch\]/g, c==1 ? '</prosody>' : (c==2 ? '': '{/pitch}')); 
+                
+        //if (use && s != old) console.log("SSML: " + old + " -> " + s);
+        if (c==1) return "<speak>" + s + "</speak>";
+        else return s;
     }    
 }
 
@@ -913,9 +941,9 @@ class VideoGen {
 if (POLLY_ACCESS_KEY.indexOf('xxx') > -1 || POLLY_SECRET_KEY.indexOf('xxx') > -1)
     console.log('please edit videogen.js to provide AWS Polly credentials')
 else if (CHARACTER_API_KEY.indexOf('xxx') > -1)
-    console.log('please edit videogen.js to provide Character API credentials (https://aws.amazon.com/marketplace/pp/B06ZY1VBFZ)')
+    console.log('please edit videogen.js to provide Character API key (start at https://aws.amazon.com/marketplace/pp/B06ZY1VBFZ)')
 else if (process.argv.length != 12)
-    console.log('syntax: node videogen character background width height offsetx offsety voice "do" "say" outputfile\nBackground can be a hex color value in quotes, e.g. "#ffffff", or an image file.\nFor "do" and "say", please see https://www.mediasemantics.com/characters.html\ne.g. node videogen MichelleHead SkyHigh250x200.jpg 250 200 0 0 NeuralJoanna "greet" "Hi there!" hello.mp4');
+    console.log('syntax: node videogen character background width height offsetx offsety voice "do" "say" outputfile\nBackground can be a hex color value in quotes, e.g. "#ffffff", or an image file. The offset controls placement of character in background.\nFor "do" and "say", please see https://www.mediasemantics.com/characters.html - "do" can be "look-at-user" for no deliberate action.\ne.g. node videogen MichelleHead SkyHigh250x200.jpg 250 200 0 0 NeuralJoanna "greet" "Hi there!" hello.mp4');
 else if (process.argv[11].substr(-4) != ".mp4")
     console.log("output file must end in .mp4");
 else if (process.argv[10].length > 255)

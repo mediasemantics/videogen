@@ -26,7 +26,7 @@ npm install
 
 Modify the videogen.js file to add your Character API access credentials.
 
-Replace 'xxxxxxxx' with the 8 digit key that was mailed to you when you signed up for Character API.
+Replace 'xxxxxxxxxxxxxxxxxxxxxxxxx' with an API Key that you have created in the API dashboard.
 
 Replace 'xxxxxxxxxxxxxxxxxxxx' and 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' with the values obtained when you created the 'polly' IAM user.
 
