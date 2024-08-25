@@ -10,6 +10,12 @@ You will need to be able to run Node.js, and you will need to obtain keys for th
 ## Obtaining keys
 Use the AWS Markeplace link above to add the Character API service to your AWS account. You will receive codes by email. You will be charged $0.007 per call to the 'animate' endpoint. Each videogen invocation will result in one or more 'animate' calls, but generally fewer than 2 or 3, depending on the character and the actions used. There are no monthly minimums. Charges will appear on your monthly AWS bill. AWS Polly calls are metered based on the length of the text to be spoken. 
 
+To access the AWS Polly Text-to-Speech service, you will want to create an IAM User for your app. On the AWS Console, go to the IAM service, click Users and then "Create User". Provide a name, such as "github_sample".
+Press Next. Select "Attach policies directly". Then, in the Permissions policies Search field, type "polly". Select the checkbox next to AmazonPollyFullAccess. Click Next. Optionally create a tag, then click Create User.
+Next, click on the newly created user to open it, and click the "Security credentials" tab. Scroll down to the section labeled "Access keys" and press "Create access key". Click Other, then Next. Then press "Create access key".
+You will want to copy two strings. The Access key ID is a string of capitalized alphanumeric characters, and the Secret Access Key is longer string
+of mixed-case characters. Make sure you record both values, as you will need to insert them into the sample.
+
 ## Installation
 
 Install the sample, e.g. in the home directory:
